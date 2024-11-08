@@ -1,0 +1,31 @@
+{
+  "name": "memo-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "jest",
+    "analyze": "ANALYZE=true next build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "next": "^13.4.0",
+    "lucide-react": "^0.263.1",
+    "recharts": "^2.7.0",
+    "@tailwindcss/forms": "^0.5.4",
+    "tailwindcss": "^3.3.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "@testing-library/react": "^14.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^2.8.0",
+    "@next/bundle-analyzer": "^13.4.0"
+  }
+}

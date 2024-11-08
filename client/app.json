@@ -1,8 +1,0 @@
-{
-    "editor.formatOnSave": true,
-    "editor.tabSize": 2,
-    "files.associations": {
-      "*.wxml": "wxml",
-      "*.wxss": "css"
-    }
-  }
