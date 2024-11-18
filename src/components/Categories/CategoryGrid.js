@@ -1,12 +1,28 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { 
   Calendar, Brain, Coffee, Tag, 
   Book, Lightbulb, Home, ShoppingBag,
   Briefcase, Heart, Plane, Music,
   Film, Gamepad2 as Gamepad, Flower2 as Plant, Settings,
-  X, Plus, Pencil, Trash2
+  X, Plus, Pencil, Trash2, Search, Filter
 } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { DraggableContentItem } from './DraggableContentItem';
 
 // 首先定义 CategoryButton 组件
 const CategoryButton = ({ icon: Icon, label, color, onClick }) => {
@@ -123,6 +139,7 @@ const ContentForm = ({ onSubmit, initialData = null, onCancel }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    console.log('Submitting form data:', formData);
     onSubmit(formData);
   };
 
@@ -189,13 +206,22 @@ const ContentForm = ({ onSubmit, initialData = null, onCancel }) => {
   );
 };
 
-// 主组件
+// 组件
 export const CategoryGrid = () => {
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-  const [contents, setContents] = useState([]);
+  const [contents, setContents] = useLocalStorage('category-contents', []);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    startDate: '',
+    endDate: '',
+    sortBy: 'date', // 'date' | 'title'
+    sortOrder: 'desc' // 'asc' | 'desc'
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleCategoryClick = (category) => {
     if (category.type === 'more') {
@@ -206,12 +232,24 @@ export const CategoryGrid = () => {
   };
 
   const handleCreateContent = (data) => {
+    if (!selectedCategory) {
+      console.error('No category selected');
+      return;
+    }
+    
     const newItem = {
       id: Date.now(),
       ...data,
-      type: selectedCategory.type
+      type: selectedCategory.type,
+      title: data.title || '',
+      description: data.description || '',
+      date: data.date || new Date().toISOString().split('T')[0],
+      time: data.time || '',
     };
-    setContents([...contents, newItem]);
+    
+    console.log('Creating new item:', newItem);
+    
+    setContents(prevContents => [...prevContents, newItem]);
     setShowForm(false);
   };
 
@@ -254,6 +292,188 @@ export const CategoryGrid = () => {
   const categoryContents = contents.filter(
     item => selectedCategory && item.type === selectedCategory.type
   );
+
+  // 搜索和筛选逻辑
+  const filteredContents = useMemo(() => {
+    return categoryContents
+      .filter(item => {
+        const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            item.description.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesDateRange = (!filters.startDate || item.date >= filters.startDate) &&
+                                (!filters.endDate || item.date <= filters.endDate);
+        return matchesSearch && matchesDateRange;
+      })
+      .sort((a, b) => {
+        const order = filters.sortOrder === 'asc' ? 1 : -1;
+        if (filters.sortBy === 'date') {
+          return (new Date(a.date) - new Date(b.date)) * order;
+        }
+        return a.title.localeCompare(b.title) * order;
+      });
+  }, [categoryContents, searchTerm, filters]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setContents((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  // 添加搜索和筛选UI
+  const SearchAndFilterBar = () => (
+    <div className="mb-4 space-y-2">
+      <div className="flex gap-2">
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <input
+            type="text"
+            placeholder="搜索..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-violet-500"
+          />
+        </div>
+        <Dialog.Root>
+          <Dialog.Trigger asChild>
+            <button className="px-4 py-2 border rounded-lg hover:bg-gray-50 flex items-center gap-2">
+              <Filter className="w-4 h-4" />
+              筛选
+            </button>
+          </Dialog.Trigger>
+          <StyledDialogContent>
+            <DialogTitle>筛选选项</DialogTitle>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">开始日期</label>
+                  <input
+                    type="date"
+                    value={filters.startDate}
+                    onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">结束日期</label>
+                  <input
+                    type="date"
+                    value={filters.endDate}
+                    onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">排序方式</label>
+                <select
+                  value={filters.sortBy}
+                  onChange={(e) => setFilters({...filters, sortBy: e.target.value})}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
+                  <option value="date">日期</option>
+                  <option value="title">标题</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">排序顺序</label>
+                <select
+                  value={filters.sortOrder}
+                  onChange={(e) => setFilters({...filters, sortOrder: e.target.value})}
+                  className="w-full px-3 py-2 border rounded-lg"
+                >
+                  <option value="desc">降序</option>
+                  <option value="asc">升序</option>
+                </select>
+              </div>
+            </div>
+          </StyledDialogContent>
+        </Dialog.Root>
+      </div>
+    </div>
+  );
+
+  // 使用 React.memo 优化不必要的重渲染
+  const DraggableContentItem = React.memo(({ item, onEdit, onDelete }) => {
+    return (
+      <div className="p-4 border rounded-lg hover:bg-gray-50 transition-all">
+        <div className="flex justify-between items-start mb-2">
+          <h3 className="font-medium">{item.title}</h3>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => onEdit(item)}
+              className="p-1 hover:bg-gray-200 rounded-full transition-colors"
+            >
+              <Pencil className="w-4 h-4 text-gray-600" />
+            </button>
+            <button 
+              onClick={() => onDelete(item.id)}
+              className="p-1 hover:bg-gray-200 rounded-full transition-colors"
+            >
+              <Trash2 className="w-4 h-4 text-red-600" />
+            </button>
+          </div>
+        </div>
+        <p className="text-sm text-gray-600">{item.description}</p>
+        <div className="flex justify-between items-center mt-2">
+          <span className="text-xs text-gray-500">
+            {new Date(item.date).toLocaleDateString()}
+          </span>
+          {item.type === 'schedule' && (
+            <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">
+              {item.time}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  });
+
+  // 使用 useCallback 优化回调函数
+  const handleEdit = useCallback((item) => {
+    setEditingItem(item);
+    setShowForm(true);
+  }, []);
+
+  const handleDelete = useCallback((id) => {
+    if (window.confirm('���定要删除这项内容吗？')) {
+      setContents(contents.filter(item => item.id !== id));
+    }
+  }, []);
+
+  // 加载状态组件
+  const LoadingState = () => (
+    <div className="flex items-center justify-center py-8">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+    </div>
+  );
+
+  // 错误状态组件
+  const ErrorState = ({ message }) => (
+    <div className="text-center py-8">
+      <div className="text-red-500 mb-2">出错了</div>
+      <p className="text-sm text-gray-500">{message}</p>
+      <button 
+        onClick={() => window.location.reload()}
+        className="mt-4 px-4 py-2 bg-violet-600 text-white rounded-lg"
+      >
+        重试
+      </button>
+    </div>
+  );
+
+  if (isLoading) return <LoadingState />;
+  if (error) return <ErrorState message={error} />;
 
   // 渲染主网格和弹窗...
   return (
@@ -309,14 +529,20 @@ export const CategoryGrid = () => {
                 />
               ) : (
                 <div className="space-y-6">
-                  {categoryContents.length === 0 ? (
+                  <div className="text-sm text-gray-500">
+                    总内容数: {contents.length}
+                    当前分类内容数: {categoryContents.length}
+                    过滤后内容数: {filteredContents.length}
+                  </div>
+                  
+                  {filteredContents.length === 0 ? (
                     <div className="text-center py-6">
                       <div className={`w-16 h-16 mx-auto rounded-full ${selectedCategory.color} 
                                    flex items-center justify-center mb-4`}>
                         <selectedCategory.icon className="w-8 h-8" />
                       </div>
                       <h3 className="text-lg font-medium mb-2">
-                        还没有{selectedCategory.label}相关的内容
+                        没有{selectedCategory.label}相关的内容
                       </h3>
                       <p className="text-sm text-gray-500 mb-4">
                         点击下方按钮创建新的{selectedCategory.label}内容
@@ -342,44 +568,53 @@ export const CategoryGrid = () => {
                           新建
                         </button>
                       </div>
-                      <div className="space-y-3">
-                        {categoryContents.map(item => (
-                          <ContentItem
-                            key={item.id}
-                            item={item}
-                            onEdit={(item) => {
-                              setEditingItem(item);
-                              setShowForm(true);
-                            }}
-                            onDelete={handleDeleteContent}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  )}
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <SortableContext
+                          items={filteredContents.map(item => item.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {filteredContents.map(item => {
+                            console.log('Rendering item:', item);
+                            return (
+                              <DraggableContentItem
+                                key={item.id}
+                                item={item}
+                                onEdit={handleEdit}
+                                onDelete={handleDelete}
+                              />
+                            );
+                          })}
+                        </SortableContext>
+                      </DndContext>
 
-                  {selectedCategory.type === 'schedule' && (
-                    <div className="border-t pt-4">
-                      <h4 className="font-medium mb-3">快速模板</h4>
-                      <div className="space-y-2">
-                        <button
-                          onClick={() => handleQuickTemplate('meeting')}
-                          className="w-full p-3 text-left rounded-lg border 
-                                   hover:bg-gray-50 transition-colors flex items-center gap-2"
-                        >
-                          <Calendar className="w-4 h-4 text-blue-600" />
-                          <span>创建会议记录</span>
-                        </button>
-                        <button
-                          onClick={() => handleQuickTemplate('reminder')}
-                          className="w-full p-3 text-left rounded-lg border 
-                                   hover:bg-gray-50 transition-colors flex items-center gap-2"
-                        >
-                          <Tag className="w-4 h-4 text-violet-600" />
-                          <span>添加提醒事项</span>
-                        </button>
-                      </div>
-                    </div>
+                      {selectedCategory.type === 'schedule' && (
+                        <div className="border-t pt-4">
+                          <h4 className="font-medium mb-3">快速模板</h4>
+                          <div className="space-y-2">
+                            <button
+                              onClick={() => handleQuickTemplate('meeting')}
+                              className="w-full p-3 text-left rounded-lg border 
+                                       hover:bg-gray-50 transition-colors flex items-center gap-2"
+                            >
+                              <Calendar className="w-4 h-4 text-blue-600" />
+                              <span>创建会议记录</span>
+                            </button>
+                            <button
+                              onClick={() => handleQuickTemplate('reminder')}
+                              className="w-full p-3 text-left rounded-lg border 
+                                       hover:bg-gray-50 transition-colors flex items-center gap-2"
+                            >
+                              <Tag className="w-4 h-4 text-violet-600" />
+                              <span>添加提醒事项</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
